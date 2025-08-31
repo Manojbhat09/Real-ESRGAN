@@ -4,7 +4,7 @@ from torch.nn import functional as F
 from PIL import Image
 import numpy as np
 import cv2
-from huggingface_hub import hf_hub_url, cached_download
+from huggingface_hub import hf_hub_download
 
 from .rrdbnet_arch import RRDBNet
 from .utils import pad_reflect, split_image_into_overlapping_patches, stich_together, \
@@ -42,11 +42,15 @@ class RealESRGAN:
             config = HF_MODELS[self.scale]
             cache_dir = os.path.dirname(model_path)
             local_filename = os.path.basename(model_path)
-            config_file_url = hf_hub_url(repo_id=config['repo_id'], filename=config['filename'])
-            cached_download(config_file_url, cache_dir=cache_dir, force_filename=local_filename)
-            print('Weights downloaded to:', os.path.join(cache_dir, local_filename))
+            model_path = hf_hub_download(
+                repo_id=config['repo_id'], 
+                filename=config['filename'],
+                cache_dir=cache_dir,
+                local_dir=cache_dir
+            )
+            print('Weights downloaded to:', model_path)
         
-        loadnet = torch.load(model_path)
+        loadnet = torch.load(model_path, weights_only=True)
         if 'params' in loadnet:
             self.model.load_state_dict(loadnet['params'], strict=True)
         elif 'params_ema' in loadnet:
@@ -55,8 +59,8 @@ class RealESRGAN:
             self.model.load_state_dict(loadnet, strict=True)
         self.model.eval()
         self.model.to(self.device)
+        self.model.float()  # Ensure model is in float32 mode
         
-    @torch.cuda.amp.autocast()
     def predict(self, lr_image, batch_size=4, patches_size=192,
                 padding=24, pad_size=15):
         scale = self.scale
@@ -67,7 +71,7 @@ class RealESRGAN:
         patches, p_shape = split_image_into_overlapping_patches(
             lr_image, patch_size=patches_size, padding_size=padding
         )
-        img = torch.FloatTensor(patches/255).permute((0,3,1,2)).to(device).detach()
+        img = torch.FloatTensor(patches/255).permute((0,3,1,2)).to(device).detach().float()
 
         with torch.no_grad():
             res = self.model(img[0:batch_size])
